@@ -1,0 +1,127 @@
+---
+- name: Automated updates
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    # Docker image registry credentials, if private
+    registry_user: "{{ lookup('ansible.builtin.env', 'REGISTRY_USER') }}"
+    registry_pass: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASS') }}"
+    # Socket Proxy
+    socket_proxy_docker_image: ghcr.io/tecnativa/docker-socket-proxy:0.1.1
+    socket_proxy_restart_policy: unless-stopped
+    socket_proxy_name: socket-proxy
+    socket_proxy_network: "{{ socket_proxy_name }}_net"
+    # https://github.com/Tecnativa/docker-socket-proxy#grant-or-revoke-access-to-certain-api-sections
+    socket_proxy_env_vars:
+      LOG_LEVEL="info"
+      EVENTS="1"
+      PING="1"
+      VERSION="1"
+      CONTAINERS="1"
+      IMAGES="1"
+      NETWORKS="1"
+      VOLUMES="1"
+      POST="1"
+      SERVICES="0"
+      INFO="0"
+      TASKS="0"
+      AUTH="0"
+      SECRETS="0"
+      BUILD="0"
+      COMMIT="0"
+      CONFIGS="0"
+      DISTRIBUTION="0"
+      EXEC="0"
+      GRPC="0"
+      NODES="0"
+      PLUGINS="0"
+      SESSION="0"
+      SWARM="0"
+      SYSTEM="0"
+
+    # Watchtower
+    watchtower_docker_image: ghcr.io/containrrr/watchtower:1.5.1
+    watchtower_restart_policy: unless-stopped
+    # https://containrrr.dev/watchtower/arguments/
+    watchtower_env_vars:
+      DOCKER_HOST="tcp://{{ socket_proxy_name }}:2375"
+      REPO_USER="{{ registry_user }}"
+      REPO_PASS="{{ registry_pass }}"
+      WATCHTOWER_LABEL_ENABLE="true"
+      WATCHTOWER_CLEANUP="true"
+      WATCHTOWER_INCLUDE_STOPPED="true"
+      WATCHTOWER_REVIVE_STOPPED="true"
+      WATCHTOWER_LOG_LEVEL="info"
+      WATCHTOWER_POLL_INTERVAL="30"
+      WATCHTOWER_TIMEOUT="10s"
+
+  tasks:
+    - name: Pull socket-proxy image
+      docker_image:
+        name: "{{ socket_proxy_docker_image }}"
+        source: pull
+        force_source: false
+
+    - name: Pull watchtower image
+      docker_image:
+        name: "{{ watchtower_docker_image }}"
+        source: pull
+        force_source: false
+
+    - name: Create socket-proxy network
+      docker_network:
+        name: "{{ socket_proxy_network }}"
+        driver: bridge
+        internal: true
+
+    - name: Deploy socket-proxy service
+      docker_container:
+        image: "{{ socket_proxy_docker_image }}"
+        name: "{{ socket_proxy_name }}"
+        restart_policy: "{{ socket_proxy_restart_policy }}"
+        state: started
+        env: "{{ socket_proxy_env_vars }}"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock"
+        networks:
+          - name: "{{ socket_proxy_network }}"
+        labels:
+          com.centurylinklabs.watchtower.enable="false"
+
+    - name: Deploy watchtower service
+      docker_container:
+        image: "{{ watchtower_docker_image }}"
+        name: watchtower
+        restart_policy: "{{ watchtower_restart_policy }}"
+        state: started
+        env: "{{ watchtower_env_vars }}"
+        networks:
+          - name: "{{ socket_proxy_network }}"
+        links:
+          - "{{ socket_proxy_name }}"
+
+    - name: Pull API image
+      docker_image:
+        name: alpine:3.13
+        source: pull
+
+    - name: Re-tag API image (tag 3.13 as latest)
+      docker_image:
+        name: alpine:3.13
+        repository: alpine:latest
+        push: false
+        force_tag: true
+        source: local
+
+    - name: Deploy API service (service that should be automatically updated)
+      docker_container:
+        image: "alpine:latest"
+        name: api
+        command: "/bin/sh -c 'while true; do sleep 1; done'"
+        restart_policy: 'unless-stopped'
+        state: started
+        labels:
+          com.centurylinklabs.watchtower.enable="true"
+...
