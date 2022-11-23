@@ -5,9 +5,13 @@
   gather_facts: false
 
   vars:
+    hostname: "{{ ansible_host }}"
     # Docker image registry credentials, if private
     registry_user: "{{ lookup('ansible.builtin.env', 'REGISTRY_USER') }}"
     registry_pass: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASS') }}"
+
+    # https://containrrr.dev/watchtower/notifications/
+    watchtower_notification_url: ""
     # Socket Proxy
     socket_proxy_docker_image: ghcr.io/tecnativa/docker-socket-proxy:0.1.1
     socket_proxy_restart_policy: unless-stopped
@@ -56,6 +60,9 @@
       WATCHTOWER_LOG_LEVEL="info"
       WATCHTOWER_POLL_INTERVAL="30"
       WATCHTOWER_TIMEOUT="10s"
+      WATCHTOWER_NOTIFICATIONS=shoutrrr
+      WATCHTOWER_NOTIFICATION_URL="{{ watchtower_notification_url }}"
+      WATCHTOWER_NOTIFICATIONS_HOSTNAME="{{ hostname }}"
 
   tasks:
     - name: Pull socket-proxy image
@@ -99,6 +106,7 @@
         env: "{{ watchtower_env_vars }}"
         networks:
           - name: "{{ socket_proxy_network }}"
+          - name: "bridge"
         links:
           - "{{ socket_proxy_name }}"
 
